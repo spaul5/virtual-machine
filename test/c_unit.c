@@ -1,0 +1,223 @@
+/*
+The MIT License (MIT)
+
+Copyright (c) 2015 Terence Parr, Hanzhou Shi, Shuai Yuan, Yuanyuan Zhang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+#include <stdio.h>
+#include <string.h>
+#include "c_unit.h"
+#include <signal.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+void (*c_unit_setup)()		= NULL;
+void (*c_unit_teardown)()	= NULL;
+
+static const char *current_test_name;
+
+static jmp_buf longjmp_env;
+
+void _assert_true(bool a, const char as[], const char funcname[]) {
+	if ( !a ) {
+		fprintf(stderr, "assertion failure in %s: %s is false\n", funcname, as);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_false(bool a, const char as[], const char funcname[]) {
+	if ( a ) {
+		fprintf(stderr, "assertion failure in %s: %s is true\n", funcname, as);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_equal(unsigned long a, unsigned long b, const char as[], const char bs[], const char funcname[]) {
+	if ( a!=b ) {
+		fprintf(stderr, "assertion failure in %s: %s == %s (%lu == %lu)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_not_equal(unsigned long a, unsigned long b, const char as[], const char bs[], const char funcname[]) {
+	if ( a==b ) {
+		fprintf(stderr, "assertion failure in %s: %s != %s (%lu != %lu)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_addr_equal(void *a, void *b, const char as[], const char bs[], const char funcname[]) {
+	if ( a!=b ) {
+		fprintf(stderr, "assertion failure in %s: %s == %s (%p == %p)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_addr_not_equal(void *a, void *b, const char as[], const char bs[], const char funcname[]) {
+	if ( a==b ) {
+		fprintf(stderr, "assertion failure in %s: %s != %s (%p != %p)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_float_equal(double a, double b, const char as[], const char bs[], const char funcname[]) {
+	if (a != b) {
+		fprintf(stderr, "assertion failure in %s: %s == %s (%lf == %lf)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_float_not_equal(double a, double b, const char as[], const char bs[], const char funcname[]) {
+	if ( a==b ) {
+		fprintf(stderr, "assertion failure in %s: %s != %s (%lf != %lf)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_str_equal(char *a, char *b, const char as[], const char bs[], const char funcname[]) {
+	if ( strcmp(a,b)!=0 ) {
+		fprintf(stderr, "assertion failure in %s: strcmp %s == %s (%s == %s)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_str_not_equal(char *a, char *b, const char as[], const char bs[], const char funcname[]) {
+	if ( strcmp(a,b)==0 ) {
+		fprintf(stderr, "assertion failure in %s: strcmp %s != %s (%s != %s)\n", funcname, as, bs, a, b);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_strn_equal(char *a, char *b, size_t n, const char as[], const char bs[], const char funcname[]) {
+	if ( strncmp(a,b,n)!=0 ) {
+		fprintf(stderr, "assertion failure in %s: strcmp %s == %s (%s == %s for %d char)\n", funcname, as, bs, a, b, (int)n);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+void _assert_strn_not_equal(char *a, char *b, size_t n, const char as[], const char bs[], const char funcname[]) {
+	if ( strncmp(a,b,n)==0 ) {
+		fprintf(stderr, "assertion failure in %s: strcmp %s != %s (%s != %s for %d char)\n", funcname, as, bs, a, b, (int)n);
+		longjmp(longjmp_env, 1);
+	}
+}
+
+static void
+handle_sys_errors(int errno)
+{
+	char *signame = "UNKNOWN";
+
+	if (errno == SIGINT) {
+		fprintf(stderr, "FAIL %s. Tests killed manually\n", current_test_name);
+		exit(errno);
+	}
+
+	if (errno == SIGSEGV) signame = "SIGSEGV";
+	else if (errno == SIGBUS) signame = "SIGBUS";
+	fprintf(stderr, "FAIL %s; bailing out due to signal %s (%d)\n", current_test_name, signame, errno);
+	exit(errno);
+}
+
+static inline void
+setup_error_handlers() {
+	signal(SIGSEGV, handle_sys_errors);
+	signal(SIGBUS, handle_sys_errors);
+	signal(SIGINT, handle_sys_errors);
+}
+
+/* Return 0 if test succeeds, else -1 upon failure */
+int c_unit_test(void (*f)(), const char funcname[]) {
+	current_test_name = funcname;
+	setup_error_handlers(); // ensure signals are trapped each time
+	int exit_code = 0;
+	if ( c_unit_setup!=NULL ) {
+		if ( setjmp(longjmp_env)==0 ) {
+			(*c_unit_setup)();
+		}
+		else {
+			fprintf(stderr, "FAIL SETUP %s\n", funcname);
+			exit_code = -1;
+		}
+	}
+	if ( setjmp(longjmp_env)==0 ) {
+		f();
+		fprintf(stderr, "PASS %s\n", funcname);
+	}
+	else {
+		fprintf(stderr, "FAIL %s\n", funcname);
+		exit_code = -1;
+	}
+	if ( c_unit_teardown!=NULL ) {
+		if ( setjmp(longjmp_env)==0 ) {
+			(*c_unit_teardown)();
+		}
+		else {
+			fprintf(stderr, "FAIL TEARDOWN %s\n", funcname);
+			exit_code = -1;
+		}
+	}
+	return exit_code;
+}
+
+void save_string_in_file(char *filename, char *s) {
+	char fname[400];
+	strcpy(fname, get_temp_dir());
+	strcat(fname, filename);
+
+	FILE *f = fopen(fname, "w");
+	if ( f==NULL ) {
+		fprintf(stderr, "can't open %s\n", filename);
+		return;
+	}
+	fputs(s, f);
+	fclose(f);
+}
+
+/** Return a diff string indicating how s1 and s2 differ; caller is responsible for free'ing buffer */
+char *strdiff(char* s1, char* s2, size_t diffsize) {
+	save_string_in_file("s1.txt", s1);
+	save_string_in_file("s2.txt", s2);
+
+	char cmd[400];
+	strcpy(cmd, "diff");
+	strcat(cmd, " ");
+	strcat(cmd, get_temp_dir());
+	strcat(cmd, "s1.txt");
+	strcat(cmd, " ");
+	strcat(cmd, get_temp_dir());
+	strcat(cmd, "s2.txt");
+
+	FILE* fp = popen(cmd, "r");
+	int bufsize = 1000; // max linesize
+	char *diff = malloc(diffsize);
+	diff[0] = '\0';
+	char buf[bufsize];
+
+	while ( fgets(buf, bufsize, fp) != NULL ) {
+		strcat(diff, buf);
+	}
+	pclose(fp);
+	return diff;
+}
+
+char *get_temp_dir() {
+	char *folder = getenv("TMPDIR");
+	return folder ? folder : "/tmp/";
+}

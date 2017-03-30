@@ -1,0 +1,32 @@
+0 strings
+2 functions maxaddr=62
+    0: 3/fib
+    62: 4/main
+27 instr, 89 bytes
+    LOAD 0
+    ICONST 0
+    IEQ
+    LOAD 0
+    ICONST 1
+    IEQ
+    OR
+    BRF 28
+    LOAD 0
+    RET
+    LOAD 0
+    ICONST 1
+    ISUB
+    CALL 0, 1
+    LOAD 0
+    ICONST 2
+    ISUB
+    CALL 0, 1
+    IADD
+    RET
+    ICONST 1
+    CALL 0, 1
+    PRINT
+    ICONST 3
+    CALL 0, 1
+    PRINT
+    HALT

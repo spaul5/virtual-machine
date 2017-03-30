@@ -1,0 +1,7 @@
+0 strings
+1 functions maxaddr=0
+	0: 4/main
+3 instr, 7 bytes
+	ICONST 1234
+	PRINT
+	HALT

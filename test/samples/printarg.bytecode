@@ -1,0 +1,13 @@
+0 strings
+2 functions maxaddr=14
+	0: 4/main
+	14: 3/foo
+8 instr, 24 bytes
+	ICONST 1234
+	CALL 14, 1
+	POP
+	HALT
+	LOAD 0
+	PRINT
+	ICONST 0
+	RET
